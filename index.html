@@ -1,0 +1,264 @@
+<!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:xlink="http://www.w3.org/1999/xlink"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/><meta name="apple-mobile-web-app-capable" content="yes"/><meta http-equiv="cache-control" content="no-cache"/><meta charset="utf-8"/><head><title>ScratchJr</title><meta name="theme-color" content="#6b4caf"/><meta name="description" content="ScratchJr in your browser — create interactive stories and games."/><link rel="manifest" href="app.webmanifest"/><style>body.web-app {
+        background: white;
+        overflow: auto;
+      }
+      .web-project-bar {
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        height: 49px;
+        padding: 4px 16px;
+        border-bottom: 1px solid #c0c2c3;
+        background: #e9ecf0;
+      }
+      .web-project-tools {
+        display: flex;
+        flex-shrink: 0;
+        gap: 8px;
+      }
+      .web-project-tools button {
+        min-width: 64px;
+        min-height: 36px;
+        padding: 6px 12px;
+        border: 1px solid #b9c0c6;
+        border-radius: 8px;
+        background: #fff;
+        color: #355e7c;
+        font: 600 13px/1 system-ui, sans-serif;
+        cursor: pointer;
+      }
+      .web-project-tools button:hover { background: #e0f2fa; }
+      .web-project-tools button:focus-visible {
+        outline: 2px solid #355e7c;
+        outline-offset: 2px;
+      }
+      .web-project-tools button:active { background: #cde7f3; }
+      .web-project-tools button[aria-pressed="true"] {
+        background: #355e7c;
+        border-color: #355e7c;
+        color: white;
+      }
+      .web-project-status {
+        margin-left: auto;
+        color: #4c4d4f;
+        font: 12px/1.2 system-ui, sans-serif;
+        opacity: 0;
+        transition: opacity 180ms ease;
+      }
+      .web-project-status.visible { opacity: 1; }
+      #web-editor {
+        position: relative;
+        height: calc(100% - 49px);
+        min-width: 1020px;
+        min-height: 745px;
+        contain: layout;
+      }
+      #web-editor > .libframe,
+      #web-editor > .paintframe {
+        top: 0;
+        left: 0;
+      }</style><script>window.scratchJrPage = "editor";
+
+      // Read initial project data from URL hash or query param
+      // Hash: iframe.src = "index.html#" + encodeURIComponent(jsonString)
+      // Query: iframe.src = "index.html?data=" + jsonString (legacy)
+      if (window.location.hash && window.location.hash.length > 1) {
+        try {
+          window.savedContent = decodeURIComponent(
+            window.location.hash.substring(1)
+          );
+        } catch (e) {
+          window.savedContent = window.location.hash.substring(1);
+        }
+      } else {
+        var urlParams = new URLSearchParams(window.location.search);
+        var dataParam = urlParams.get("data");
+        if (dataParam) {
+          window.savedContent = dataParam;
+        }
+      }
+
+      // Standalone browser mode: restore the last autosaved project.
+      if (!window.savedContent) {
+        try {
+          window.savedContent = window.localStorage.getItem(
+            "scratchjr.web.project.v1"
+          );
+        } catch (e) {
+          // Storage can be disabled by the browser; the editor still works.
+        }
+      }
+
+      // Support postMessage for loading data after init
+      window.addEventListener("message", function (e) {
+        if (e.data && e.data.type === "LOAD_DATA") {
+          window.__scratchJrLoadData = e.data.data;
+          if (window.__scratchJrReady && window.__loadExternalProject) {
+            window.__loadExternalProject(e.data.data);
+          }
+        }
+        if (e.data && e.data.type === "REQUEST_SAVE") {
+          // Trigger a save from parent - calls Project.save which posts SAVE_DATA back
+          if (window.__scratchJrReady && window.__requestSave) {
+            window.__requestSave();
+          }
+        }
+      });</script><style>html, body { overscroll-behavior: none; -webkit-user-select: none; user-select: none; }
+      /* Only the interactive editor regions capture touch; everywhere else the page may scroll. */
+      #workspacebkg, #paintpalette, #painttools, #sizeSelector, #photocontrols, #scriptscontainer, #palette, #stage, .stage, #spritecc, .libframe, .addsprite, canvas, .block, .scripts { touch-action: none; }</style><script>// Chrome makes window/document touch listeners passive, so the app's preventDefault is ignored
+      // and the page pans instead of drawing. Block default touch handling globally (non-passive).
+      // The Desktop port only listens for mouse events. Chrome synthesises a click from a tap but
+      // never mousemove from a finger drag, so translate touches into mouse events ourselves.
+      (function () {
+        var active = null;
+        function fire(type, touch, target) {
+          var ev = new MouseEvent(type, { bubbles: true, cancelable: true, view: window, button: 0, buttons: type === "mouseup" ? 0 : 1,
+            clientX: touch.clientX, clientY: touch.clientY, screenX: touch.screenX, screenY: touch.screenY });
+          (target || document.elementFromPoint(touch.clientX, touch.clientY) || document.body).dispatchEvent(ev);
+        }
+        var INTERACTIVE = "#workspacebkg, #paintpalette, #painttools, #sizeSelector, #photocontrols, #scriptscontainer, #palette, #stage, .stage, #spritecc, .libframe, .addsprite, canvas, .block, .scripts";
+        function interactive(el) {
+          for (var n = el; n && n.nodeType === 1; n = n.parentNode) {
+            if (n.onmousedown || (n.matches && n.matches(INTERACTIVE))) return true;
+          }
+          return false;
+        }
+        document.addEventListener("touchstart", function (e) {
+          if (active !== null || e.touches.length !== 1) return;
+          if (!interactive(e.target)) return; // let the browser scroll / click normally
+          var t = e.changedTouches[0]; active = t.identifier;
+          if (e.cancelable) e.preventDefault();
+          fire("mousedown", t, e.target);
+        }, { passive: false, capture: true });
+        document.addEventListener("touchmove", function (e) {
+          if (active === null) return;
+          if (e.cancelable) e.preventDefault();
+          for (var i = 0; i < e.changedTouches.length; i++) if (e.changedTouches[i].identifier === active) fire("mousemove", e.changedTouches[i], e.target);
+        }, { passive: false, capture: true });
+        function end(e) {
+          for (var i = 0; i < e.changedTouches.length; i++) if (e.changedTouches[i].identifier === active) { active = null; if (e.cancelable) e.preventDefault(); fire("mouseup", e.changedTouches[i], e.target); }
+        }
+        document.addEventListener("touchend", end, { passive: false, capture: true });
+        document.addEventListener("touchcancel", end, { passive: false, capture: true });
+      })();
+      document.addEventListener("gesturestart", function (e) { e.preventDefault(); }, { passive: false });</script><script defer="defer" src="bundle.js"></script></head><body class="web-app"><header class="web-project-bar"><nav class="web-project-tools" aria-label="Project file controls"><button type="button" id="web-new" title="New project">New</button> <button type="button" id="web-open" title="Open a ScratchJr web project">Open</button> <button type="button" id="web-save" title="Download a project backup">Save</button> <button type="button" id="web-mute" aria-label="Mute sounds" aria-pressed="false" title="Turn sounds off">Sound: On</button> <input id="web-file" type="file" accept="application/json,.json,.sjrweb" hidden/></nav><div id="web-status" class="web-project-status" role="status" aria-live="polite"></div></header><main id="web-editor" aria-label="ScratchJr editor"><div class="frame" id="frame"></div><div class="libframe" id="libframe"></div><div class="paintframe" id="paintframe"></div></main><script>(function () {
+        var storageKey = "scratchjr.web.project.v1";
+        var statusTimer;
+        var status = document.getElementById("web-status");
+        var fileInput = document.getElementById("web-file");
+        var muteButton = document.getElementById("web-mute");
+        var muteKey = "scratchjr.web.muted.v1";
+        window.__scratchJrMuted = false;
+        try {
+          window.__scratchJrMuted = window.localStorage.getItem(muteKey) === "true";
+        } catch (e) {}
+
+        function updateMuteButton() {
+          muteButton.textContent = window.__scratchJrMuted ? "Sound: Off" : "Sound: On";
+          muteButton.title = window.__scratchJrMuted ? "Turn sounds on" : "Turn sounds off";
+          muteButton.setAttribute("aria-pressed", String(window.__scratchJrMuted));
+        }
+
+        updateMuteButton();
+        muteButton.addEventListener("click", function () {
+          window.__scratchJrMuted = !window.__scratchJrMuted;
+          if (window.tablet && window.tablet.setMuted) {
+            window.tablet.setMuted(window.__scratchJrMuted);
+          }
+          try {
+            window.localStorage.setItem(muteKey, String(window.__scratchJrMuted));
+          } catch (e) {}
+          updateMuteButton();
+        });
+
+        function showStatus(message) {
+          status.textContent = message;
+          status.classList.add("visible");
+          window.clearTimeout(statusTimer);
+          statusTimer = window.setTimeout(function () {
+            status.classList.remove("visible");
+          }, 1800);
+        }
+
+        function readProjectFile(text) {
+          var parsed = JSON.parse(text);
+          if (parsed && parsed.format === "scratchjr-web-v1") {
+            if (!Array.isArray(parsed.project) || !parsed.project[0] || !parsed.project[0].json) throw new Error("Invalid project");
+            Object.keys(parsed.assets || {}).forEach(function (name) {
+              window.localStorage.setItem("scratchjr.web.asset." + name, parsed.assets[name]);
+            });
+            window.localStorage.setItem("scratchjr.web.assets.v1", JSON.stringify(Object.keys(parsed.assets || {})));
+            return JSON.stringify(parsed.project);
+          }
+          if (!Array.isArray(parsed) || !parsed[0] || !parsed[0].json) throw new Error("Invalid project");
+          return text;
+        }
+
+        window.addEventListener("scratchjr:project-saved", function () {
+          showStatus("Saved in this browser");
+        });
+
+        document.getElementById("web-new").addEventListener("click", function () {
+          if (!window.confirm("Start a new project? The current project will remain in your downloaded backups only.")) return;
+          window.localStorage.removeItem(storageKey);
+          window.location.replace(window.location.pathname);
+        });
+
+        document.getElementById("web-open").addEventListener("click", function () {
+          fileInput.click();
+        });
+
+        fileInput.addEventListener("change", function () {
+          var file = fileInput.files && fileInput.files[0];
+          if (!file) return;
+          var reader = new FileReader();
+          reader.onload = function () {
+            try {
+              window.localStorage.setItem(storageKey, readProjectFile(reader.result));
+              window.location.replace(window.location.pathname);
+            } catch (e) {
+              window.alert("This file is not a valid ScratchJr web project.");
+            }
+          };
+          reader.readAsText(file);
+        });
+
+        document.getElementById("web-save").addEventListener("click", function () {
+          if (window.__requestSave) window.__requestSave();
+          var data = window.localStorage.getItem(storageKey);
+          if (!data) {
+            showStatus("The project is not ready yet");
+            return;
+          }
+          var parsed = JSON.parse(data);
+          var name = (parsed[0].name || "ScratchJr-project")
+            .replace(/[^a-z0-9_-]+/gi, "-")
+            .replace(/^-|-$/g, "");
+          var assets = {};
+          try {
+            JSON.parse(window.localStorage.getItem("scratchjr.web.assets.v1") || "[]").forEach(function (assetName) {
+              var value = window.localStorage.getItem("scratchjr.web.asset." + assetName);
+              if (value !== null) assets[assetName] = value;
+            });
+          } catch (e) {}
+          var backup = JSON.stringify({
+            format: "scratchjr-web-v1",
+            project: parsed,
+            assets: assets,
+          });
+          var blob = new Blob([backup], { type: "application/json" });
+          var link = document.createElement("a");
+          link.href = URL.createObjectURL(blob);
+          link.download = (name || "ScratchJr-project") + ".sjrweb";
+          link.click();
+          window.setTimeout(function () { URL.revokeObjectURL(link.href); }, 1000);
+          showStatus("Backup downloaded");
+        });
+
+        if ("serviceWorker" in navigator && window.location.protocol === "https:") {
+          window.addEventListener("load", function () {
+            navigator.serviceWorker.register("./sw.js");
+          });
+        }
+      })();</script></body></html>
